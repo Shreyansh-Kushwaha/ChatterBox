@@ -24,5 +24,5 @@ It features a stunning futuristic UI with dynamic, persistent light and dark the
 ---
 
 ## 📸 Screenshots
-
+![Screenshot](public/106.jpg)
 ---
