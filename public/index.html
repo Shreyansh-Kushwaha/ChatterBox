@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Chat</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>Global Chat Room 🌍</h1>
+        </div>
+
+        <div id="messages">
+            </div>
+
+        <div class="input-area">
+            <input type="text" id="message" placeholder="Type a message...">
+            <button id="sendbtn">Send</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const sendbtn = document.getElementById("sendbtn");
+        const messageInput = document.getElementById("message");
+        const allmessages = document.getElementById("messages");
+
+        const displayMessage = (msg) => {
+            const div = document.createElement("div");
+
+            if (msg.sender === socket.id) {
+                div.classList.add("message", "my-message");
+                div.innerText = msg.text; 
+            } else {
+                div.classList.add('message', 'other-message');
+                
+                const senderNickname = `User (${msg.sender.substring(0, 5)})`;
+                div.innerText = `${senderNickname}: ${msg.text}`;
+            }
+
+            allmessages.appendChild(div);
+      
+            allmessages.scrollTop = allmessages.scrollHeight;
+        };
+
+        socket.on('load-history', (history) => {
+            history.forEach(msg => {
+                displayMessage(msg);
+            });
+        });
+
+        socket.on("message", (message) => {
+            displayMessage(message);
+        });
+        
+        const sendMessage = () => {
+            const message = messageInput.value;
+            if (message.trim()) { 
+                socket.emit("user-message", message);
+                messageInput.value = "";
+            }
+        };
+
+        sendbtn.addEventListener('click', sendMessage);
+        
+
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+    </script>
+</body>
+</html>
