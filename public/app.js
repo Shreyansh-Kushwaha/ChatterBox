@@ -46,8 +46,9 @@ let soundEnabled = true;
 let sidebarOpen  = false;
 let emojiPickerOpen = false;
 let activeCatKey = null;
+let hasJoined    = false;      // true after first successful join
 
-// typing: Map<username, clearTimeoutHandle>
+// typing: Map<socketId, { username, timer }>  — keyed by ID not name
 const typingUsers = new Map();
 let  localTyping  = false;
 let  localTypingTimer = null;
@@ -157,9 +158,8 @@ function appendMessage(msg, instant = false) {
     const isOwn = msg.sender === myId;
     const ts    = msg.timestamp || Date.now();
 
-    // Grouping: same sender within GROUP_GAP_MS
-    const sameGroup = !isOwn
-      && lastSenderId === msg.sender
+    // Grouping: same sender within GROUP_GAP_MS (own messages group too)
+    const sameGroup = lastSenderId === msg.sender
       && (ts - lastSenderTs) < GROUP_GAP_MS;
 
     const row = document.createElement('div');
@@ -184,13 +184,8 @@ function appendMessage(msg, instant = false) {
 
     D.messages.appendChild(row);
 
-    if (!isOwn) {
-      lastSenderId = msg.sender;
-      lastSenderTs = ts;
-    } else {
-      lastSenderId = null;
-      lastSenderTs = 0;
-    }
+    lastSenderId = msg.sender;
+    lastSenderTs = ts;
   }
 
   if (atBottom || instant) scrollToBottom(instant);
@@ -215,16 +210,17 @@ function loadHistory(history) {
 
 // ── Typing indicator ──────────────────────────────────────────
 function updateTypingBar() {
-  const names = [...typingUsers.keys()];
+  const entries = [...typingUsers.values()];
 
-  if (names.length === 0) {
+  if (entries.length === 0) {
     D.typingBar.innerHTML = '';
     return;
   }
 
+  const names = entries.map(e => escapeHTML(e.username));
   let label;
-  if (names.length === 1) label = `${escapeHTML(names[0])} is typing`;
-  else if (names.length === 2) label = `${escapeHTML(names[0])} and ${escapeHTML(names[1])} are typing`;
+  if (names.length === 1) label = `${names[0]} is typing`;
+  else if (names.length === 2) label = `${names[0]} and ${names[1]} are typing`;
   else label = 'Several people are typing';
 
   D.typingBar.innerHTML = `
@@ -233,26 +229,27 @@ function updateTypingBar() {
   `;
 }
 
-function handleIncomingTyping({ username, typing }) {
+function handleIncomingTyping({ username, id, typing }) {
+  // Key by socket ID so duplicate usernames don't clash
+  const key = id || username;
   if (typing) {
-    // Reset the auto-clear timer
-    if (typingUsers.has(username)) clearTimeout(typingUsers.get(username));
+    if (typingUsers.has(key)) clearTimeout(typingUsers.get(key).timer);
     const timer = setTimeout(() => {
-      typingUsers.delete(username);
+      typingUsers.delete(key);
       updateTypingBar();
-    }, 3000);
-    typingUsers.set(username, timer);
+    }, 2300); // shorter than the local 2500 ms stop — remote always clears first
+    typingUsers.set(key, { username, timer });
   } else {
-    if (typingUsers.has(username)) {
-      clearTimeout(typingUsers.get(username));
-      typingUsers.delete(username);
+    if (typingUsers.has(key)) {
+      clearTimeout(typingUsers.get(key).timer);
+      typingUsers.delete(key);
     }
   }
   updateTypingBar();
 }
 
 function clearTypingState() {
-  typingUsers.forEach(t => clearTimeout(t));
+  typingUsers.forEach(({ timer }) => clearTimeout(timer));
   typingUsers.clear();
   updateTypingBar();
 }
@@ -438,9 +435,20 @@ function showApp(username, room) {
 }
 
 // ── Socket events ─────────────────────────────────────────────
+
+// On reconnect, re-emit join so the server restores room state and presence
+socket.on('connect', () => {
+  if (hasJoined && myUsername && currentRoom) {
+    socket.emit('join', { username: myUsername, room: currentRoom });
+  }
+});
+
 socket.on('joined', ({ username, room }) => {
-  myId = socket.id;
-  showApp(username, room);
+  myId = socket.id;  // always refresh — new socket ID after every reconnect
+  if (!hasJoined) {
+    hasJoined = true;
+    showApp(username, room);
+  }
 });
 
 socket.on('load-history', history => {
@@ -457,11 +465,11 @@ socket.on('message', msg => {
     playNotification();
   }
 
-  // Remove typing indicator for this sender
-  if (msg.type === 'chat' && msg.username) {
-    if (typingUsers.has(msg.username)) {
-      clearTimeout(typingUsers.get(msg.username));
-      typingUsers.delete(msg.username);
+  // Remove typing indicator for this sender (keyed by socket ID)
+  if (msg.type === 'chat' && msg.sender) {
+    if (typingUsers.has(msg.sender)) {
+      clearTimeout(typingUsers.get(msg.sender).timer);
+      typingUsers.delete(msg.sender);
       updateTypingBar();
     }
   }
@@ -495,13 +503,31 @@ qsa('.room-chip', D.modalRoomPicker).forEach(chip => {
   });
 });
 
-// Join button
+// Join button — with timeout recovery so it never stays stuck
 D.joinBtn.addEventListener('click', () => {
   const username = D.usernameInput.value.trim();
   if (!username) return;
   D.joinBtn.disabled = true;
   D.joinBtn.textContent = 'Joining…';
   socket.emit('join', { username, room: pendingRoom });
+
+  const resetBtn = () => {
+    if (hasJoined) return;
+    D.joinBtn.disabled = false;
+    D.joinBtn.textContent = 'Enter Chat';
+  };
+
+  // Restore button after 6 s if server never responds
+  const timeout = setTimeout(resetBtn, 6000);
+  socket.once('joined', () => clearTimeout(timeout));
+});
+
+// Re-enable button immediately on connection error
+socket.on('connect_error', () => {
+  if (!hasJoined) {
+    D.joinBtn.disabled = false;
+    D.joinBtn.textContent = 'Enter Chat';
+  }
 });
 
 // Sidebar toggle

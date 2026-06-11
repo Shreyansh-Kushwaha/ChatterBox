@@ -26,6 +26,10 @@ function broadcastPresence(room) {
 
 io.on('connection', socket => {
   socket.on('join', ({ username, room }) => {
+    // Leave any existing room to prevent double-subscription on re-join
+    const existing = users.get(socket.id);
+    if (existing) socket.leave(existing.room);
+
     const name = String(username || '').trim().slice(0, 20) || `User${socket.id.slice(0, 4)}`;
     const validRoom = ROOMS.includes(room) ? room : 'general';
 
@@ -64,7 +68,7 @@ io.on('connection', socket => {
   socket.on('typing', isTyping => {
     const user = users.get(socket.id);
     if (!user) return;
-    socket.to(user.room).emit('typing', { username: user.username, typing: Boolean(isTyping) });
+    socket.to(user.room).emit('typing', { username: user.username, id: socket.id, typing: Boolean(isTyping) });
   });
 
   socket.on('switch-room', newRoom => {
@@ -81,8 +85,8 @@ io.on('connection', socket => {
     });
     broadcastPresence(oldRoom);
 
+    socket.join(newRoom);  // join before mutating state to close the race window
     user.room = newRoom;
-    socket.join(newRoom);
 
     socket.emit('load-history', roomHistory[newRoom]);
 
