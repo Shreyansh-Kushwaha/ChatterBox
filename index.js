@@ -1,37 +1,114 @@
 const http = require("http");
 const express = require("express");
-const app = express();
 const path = require('path');
-const {Server} = require('socket.io');
+const { Server } = require('socket.io');
+
+const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const messages = [];
+const ROOMS = ['general', 'tech', 'gaming', 'random'];
+const MAX_HISTORY = 50;
 
-io.on('connection' , (socket) => {
-	console.log('A new user has connected' , socket.id);
+const users = new Map(); // socketId -> { username, room }
+const roomHistory = {};
+ROOMS.forEach(r => { roomHistory[r] = []; });
 
-	socket.emit("load-history" , messages);
+function getRoomUsers(room) {
+  const list = [];
+  users.forEach(u => { if (u.room === room) list.push(u.username); });
+  return list;
+}
 
-	socket.on("user-message", (message) => {
-		const messageData = {
-			text: message,
-			sender: socket.id,
-		};
+function broadcastPresence(room) {
+  io.to(room).emit('users-list', getRoomUsers(room));
+}
 
-		messages.push(messageData);
+io.on('connection', socket => {
+  socket.on('join', ({ username, room }) => {
+    const name = String(username || '').trim().slice(0, 20) || `User${socket.id.slice(0, 4)}`;
+    const validRoom = ROOMS.includes(room) ? room : 'general';
 
-		io.emit("message" , messageData);
-	})
+    users.set(socket.id, { username: name, room: validRoom });
+    socket.join(validRoom);
+
+    socket.emit('joined', { username: name, room: validRoom });
+    socket.emit('load-history', roomHistory[validRoom]);
+
+    io.to(validRoom).emit('message', {
+      type: 'system',
+      text: `${name} joined the chat`,
+      timestamp: Date.now()
+    });
+    broadcastPresence(validRoom);
+  });
+
+  socket.on('user-message', text => {
+    const user = users.get(socket.id);
+    if (!user || !String(text || '').trim()) return;
+
+    const msg = {
+      type: 'chat',
+      text: String(text).trim().slice(0, 500),
+      sender: socket.id,
+      username: user.username,
+      timestamp: Date.now()
+    };
+
+    roomHistory[user.room].push(msg);
+    if (roomHistory[user.room].length > MAX_HISTORY) roomHistory[user.room].shift();
+
+    io.to(user.room).emit('message', msg);
+  });
+
+  socket.on('typing', isTyping => {
+    const user = users.get(socket.id);
+    if (!user) return;
+    socket.to(user.room).emit('typing', { username: user.username, typing: Boolean(isTyping) });
+  });
+
+  socket.on('switch-room', newRoom => {
+    const user = users.get(socket.id);
+    if (!user || !ROOMS.includes(newRoom) || user.room === newRoom) return;
+
+    const oldRoom = user.room;
+    socket.leave(oldRoom);
+
+    io.to(oldRoom).emit('message', {
+      type: 'system',
+      text: `${user.username} left`,
+      timestamp: Date.now()
+    });
+    broadcastPresence(oldRoom);
+
+    user.room = newRoom;
+    socket.join(newRoom);
+
+    socket.emit('load-history', roomHistory[newRoom]);
+
+    io.to(newRoom).emit('message', {
+      type: 'system',
+      text: `${user.username} joined the chat`,
+      timestamp: Date.now()
+    });
+    broadcastPresence(newRoom);
+  });
+
+  socket.on('disconnect', () => {
+    const user = users.get(socket.id);
+    if (!user) return;
+    const { username, room } = user;
+    users.delete(socket.id);
+
+    io.to(room).emit('message', {
+      type: 'system',
+      text: `${username} left the chat`,
+      timestamp: Date.now()
+    });
+    broadcastPresence(room);
+  });
 });
 
+app.use(express.static(path.resolve('./public')));
 
-app.use(express.static(path.resolve("./public")))
-
-
-app.get('/' , (req,res) => {
-	return res.sendFile(".public/index.html");
-});
-
-
-server.listen(7000, () => console.log('Server started at port 7000'));
+server.listen(7000, () => console.log('ChatterBox running on http://localhost:7000'));

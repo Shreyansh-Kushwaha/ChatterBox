@@ -1,79 +1,133 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Chat</title>
-    <link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatterBox</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
-    <div class="chat-container">
-        <div class="chat-header">
-            <h1>Global Chat Room 🌍</h1>
-        </div>
+  <!-- Username / Room Modal -->
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-icon">💬</div>
+      <h2 id="modal-title">Welcome to ChatterBox</h2>
+      <p class="modal-sub">Pick a name and choose your room</p>
 
-        <div id="messages">
-            </div>
+      <input
+        type="text"
+        id="username-input"
+        class="modal-input"
+        placeholder="Your username…"
+        maxlength="20"
+        autocomplete="off"
+        spellcheck="false"
+      >
 
-        <div class="input-area">
-            <input type="text" id="message" placeholder="Type a message...">
-            <button id="sendbtn">Send</button>
-        </div>
+      <div class="room-picker-label">Join Room</div>
+      <div class="room-picker" id="modal-room-picker">
+        <button class="room-chip active" data-room="general">🌍 General</button>
+        <button class="room-chip" data-room="tech">💻 Tech</button>
+        <button class="room-chip" data-room="gaming">🎮 Gaming</button>
+        <button class="room-chip" data-room="random">🎲 Random</button>
+      </div>
+
+      <button id="join-btn" class="join-btn" disabled>Enter Chat</button>
     </div>
+  </div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-        const socket = io();
-        const sendbtn = document.getElementById("sendbtn");
-        const messageInput = document.getElementById("message");
-        const allmessages = document.getElementById("messages");
+  <!-- Main App (hidden until joined) -->
+  <div id="app" class="app hidden">
 
-        const displayMessage = (msg) => {
-            const div = document.createElement("div");
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar" aria-label="Sidebar">
+      <div class="sidebar-top">
+        <span class="sidebar-brand">ChatterBox</span>
+        <button class="icon-btn sidebar-close-btn" id="sidebar-close" title="Close sidebar" aria-label="Close sidebar">✕</button>
+      </div>
 
-            if (msg.sender === socket.id) {
-                div.classList.add("message", "my-message");
-                div.innerText = msg.text; 
-            } else {
-                div.classList.add('message', 'other-message');
-                
-                const senderNickname = `User (${msg.sender.substring(0, 5)})`;
-                div.innerText = `${senderNickname}: ${msg.text}`;
-            }
+      <div class="sidebar-section">
+        <div class="sidebar-section-title">Rooms</div>
+        <div class="rooms-list" id="rooms-list">
+          <button class="room-btn active" data-room="general"><span class="rb-icon">🌍</span><span class="rb-label">General</span></button>
+          <button class="room-btn" data-room="tech"><span class="rb-icon">💻</span><span class="rb-label">Tech</span></button>
+          <button class="room-btn" data-room="gaming"><span class="rb-icon">🎮</span><span class="rb-label">Gaming</span></button>
+          <button class="room-btn" data-room="random"><span class="rb-icon">🎲</span><span class="rb-label">Random</span></button>
+        </div>
+      </div>
 
-            allmessages.appendChild(div);
-      
-            allmessages.scrollTop = allmessages.scrollHeight;
-        };
+      <div class="sidebar-section sidebar-users-section">
+        <div class="sidebar-section-title">Online — <span id="online-count">0</span></div>
+        <div id="users-list" class="users-list"></div>
+      </div>
+    </nav>
 
-        socket.on('load-history', (history) => {
-            history.forEach(msg => {
-                displayMessage(msg);
-            });
-        });
+    <!-- Mobile sidebar backdrop -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-        socket.on("message", (message) => {
-            displayMessage(message);
-        });
-        
-        const sendMessage = () => {
-            const message = messageInput.value;
-            if (message.trim()) { 
-                socket.emit("user-message", message);
-                messageInput.value = "";
-            }
-        };
+    <!-- Chat area -->
+    <main class="chat-main" id="chat-main">
 
-        sendbtn.addEventListener('click', sendMessage);
-        
+      <header class="chat-header">
+        <button class="icon-btn" id="sidebar-toggle" title="Toggle sidebar" aria-label="Toggle sidebar">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="2" y1="5" x2="18" y2="5"/>
+            <line x1="2" y1="10" x2="18" y2="10"/>
+            <line x1="2" y1="15" x2="18" y2="15"/>
+          </svg>
+        </button>
 
-        messageInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
+        <div class="header-center">
+          <div class="header-room-name" id="header-room-name">🌍 General</div>
+          <div class="header-user-count" id="header-user-count">0 online</div>
+        </div>
 
-    </script>
+        <div class="header-actions">
+          <button class="icon-btn" id="sound-btn" title="Toggle sound" aria-label="Toggle sound">
+            <span id="sound-icon">🔔</span>
+          </button>
+          <button class="icon-btn" id="theme-btn" title="Toggle theme" aria-label="Toggle theme">
+            <span id="theme-icon">☀️</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Messages -->
+      <div id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
+
+      <!-- Typing indicator -->
+      <div id="typing-bar" class="typing-bar" aria-live="polite" aria-atomic="true"></div>
+
+      <!-- Emoji picker (positioned above input) -->
+      <div id="emoji-picker" class="emoji-picker hidden" role="dialog" aria-label="Emoji picker">
+        <div class="emoji-cats" id="emoji-cats"></div>
+        <div class="emoji-grid" id="emoji-grid"></div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area">
+        <button class="icon-btn emoji-toggle-btn" id="emoji-btn" title="Open emoji picker" aria-label="Open emoji picker">😊</button>
+        <input
+          type="text"
+          id="msg-input"
+          class="msg-input"
+          placeholder="Type a message…"
+          maxlength="500"
+          autocomplete="off"
+          spellcheck="true"
+          aria-label="Message input"
+        >
+        <button id="send-btn" class="send-btn" aria-label="Send message">Send</button>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
